@@ -1,0 +1,63 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Сборщик телеметрии МЧС ({{ site }})
+Documentation=file://{{ config_dir }}/config.yml
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User={{ service_user }}
+Group={{ service_user }}
+
+# Доступ к железу даётся группами, а не правами root: сборщику нужны
+# только символьные устройства GPIO и I2C.
+SupplementaryGroups=gpio{% if sensors_enabled %} i2c{% endif %}
+
+
+ExecStart={{ install_dir }}/bin/collector -config {{ config_dir }}/config.yml
+
+# Падение сборщика оставляет объект без приёма телеметрии, поэтому
+# поднимаем всегда. Реле при этом отпускает: линия освобождается, и
+# ядро снимает её в безопасное состояние — пушка не остаётся греть
+# без надзора.
+Restart=always
+RestartSec=2s
+
+# Буфер телеметрии. Отдельный каталог состояния: обновление бинаря не
+# должно задевать данные, ещё не отданные в центр.
+StateDirectory=mchs
+WorkingDirectory={{ state_dir }}
+
+# Останов мягкий: сборщик по SIGTERM гасит пушку, делает последнюю
+# попытку выгрузки и закрывает буфер.
+KillSignal=SIGTERM
+TimeoutStopSec=30s
+
+# Ограничения. PrivateDevices здесь именно no: он подменяет /dev
+# минимальным набором, и /dev/gpiochip0 внутрь не попадает — реле
+# стало бы недоступно.
+PrivateDevices=no
+DevicePolicy=closed
+DeviceAllow=/dev/gpiochip0 rw
+{% if sensors_enabled %}
+DeviceAllow={{ sensors_device }} rw
+{% endif %}
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

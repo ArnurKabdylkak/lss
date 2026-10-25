@@ -1,0 +1,33 @@
+# Автозапуск центра на Linux-узле.
+#
+#   sudo cp deploy/systemd/mchs-center.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now mchs-center
+#
+# WorkingDirectory должен указывать на каталог с compose.yaml.
+
+[Unit]
+Description=Центр сбора телеметрии МЧС (telemetryd и видеотракт)
+Documentation=file:///data/lss/center/README.md
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/data/lss/center
+
+# Профиль video поднимает центр вместе с камерами и панелью.
+# Профиль sim намеренно не включён: имитатор запускают руками.
+ExecStart=/usr/bin/docker compose up -d --remove-orphans
+ExecStop=/usr/bin/docker compose stop
+ExecReload=/usr/bin/docker compose up -d --remove-orphans
+
+# Пересборка образов при старте не делается намеренно: узел должен
+# подниматься после отключения питания, а не ждать сборки. Образы
+# обновляются отдельной командой при развёртывании.
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,21 @@
+{
+  "name": "lwip",
+  "version": "2.2.1",
+  "description": "lwIP - lightweight TCP/IP stack (NO_SYS=1, raw API)",
+  "license": "BSD-3-Clause",
+  "build": {
+    "srcDir": "src",
+    "includeDir": "src/include",
+    "srcFilter": [
+      "-<*>",
+      "+<core/*.c>",
+      "+<core/ipv4/*.c>",
+      "+<netif/ethernet.c>"
+    ],
+    "flags": [
+      "-I src/include",
+      "-Wno-unused-parameter",
+      "-Wno-address"
+    ]
+  }
+}

@@ -1,0 +1,199 @@
+# Раскладка объекта: комнаты, тренажёры и задания, камеры.
+# Образец с пояснениями — rooms.example.yaml.
+#
+# Комплекс: теплокамера и два зала дымокамеры. В каждой комнате свой
+# сборщик (RPi). Оборудование комнат — светильники, вытяжка,
+# дымогенераторы, стробоскопы, акустика, замки — здесь не описано
+# намеренно: оно заводится отдельно.
+
+site: obj-17
+
+# Секции комплекса: занятие открывается на секцию целиком.
+# Дымокамера — две комнаты подряд с общим таймером, видеозаписью и
+# зачётом (сценарий дымокамеры §3).
+sections:
+  - id: heat
+    name: "Теплокамера"
+    rooms: [room-1]
+  - id: smoke
+    name: "Дымокамера"
+    rooms: [room-2, room-3]
+
+rooms:
+  # --- Теплокамера. Сценарий: docs/scenario-lss.md --------------------
+  - id: room-1
+    name: "Теплокамера"
+
+    # Вместимость: сценарий §4 говорит о 2–3 спасателях одновременно.
+    capacity: 3
+
+    # Сборщик комнаты: ему адресуется аварийная остановка.
+    collector: obj-17-rpi-1
+
+    devices:
+      - {id: obj-17-load-1,   name: "Ударный молот, 25 кг", kind: load}
+      - {id: obj-17-bike-1,   name: "Велоэргометр",         kind: bike}
+      # Правило пересчёта ступеней в этажи (сценарий §5).
+      - {id: obj-17-stairs-1, name: "Бесконечная лестница", kind: stairs, steps_per_floor: 16}
+
+    # Подготовка: прогрев до 40 °C за 30 минут (сценарий §3).
+    prepare:
+      target_c: 40
+      minutes: 30
+
+    # Порог защиты держится выше цели, иначе пушка снималась бы
+    # прямо на прогреве.
+    # Четыре канала реле теплокамеры, в порядке платы.
+    # Все восемь каналов платы, в порядке платы. Здесь же сценарий:
+    # prepare — включается ли узел при старте, alarm — каким он
+    # становится по аварии (on, off, keep). Решает центр: сборщик
+    # только щёлкает выводами.
+    equipment:
+      - {unit: heat,   prepare: true,  alarm: "off"}
+      - {unit: light,  prepare: true,  alarm: "on"}
+      - {unit: fan,    prepare: false, alarm: "on"}
+      - {unit: aux,    prepare: false, alarm: "off"}
+      - {unit: aux2,   prepare: false, alarm: "off"}
+      - {unit: aux3,   prepare: false, alarm: "off"}
+      - {unit: aux4,   prepare: false, alarm: "off"}
+      - {unit: stairs, prepare: true,  alarm: "off"}
+
+    heater:
+      device: obj-17-heater-1
+      limit_c: 60
+      resume_c: 50
+
+    cameras:
+      - id: room1-cam-1
+        name: "Зал, общий план"
+        url: "rtsp://admin:${CAM_PASS}@192.168.1.64:554/Streaming/Channels/101"
+        transport: tcp
+        location: "над входом"
+
+      - id: room1-cam-2
+        name: "Зал, лестница и груз"
+        url: "rtsp://admin:${CAM_PASS}@192.168.1.65:554/Streaming/Channels/101"
+        transport: tcp
+        location: "дальний угол"
+
+  # --- Дымокамера, комната 1. Сценарий: docs/scenario-smoke.md --------
+  # Задания: лабиринт, набор чисел, имитатор очага.
+  - id: room-2
+    name: "Дымокамера, 1 этаж"
+    floor: 1
+    collector: obj-17-rpi-2
+
+    # Датчик воздуха комнаты. Тепловой пушки здесь нет, и температуру
+    # берут с него: в дымокамере она не цель, но за ней следят.
+    sensor: obj-17-smoke-temp-2
+
+    # Восемь каналов реле комнаты. Порядок — как на плате: так его
+    # сверяют с монтажом, не пересчитывая.
+    # Порядок — как на плате реле, от первого канала к восьмому.
+    equipment:
+      - {unit: smoke,  prepare: true,  alarm: "off"}
+      - {unit: heat,   prepare: true,  alarm: "off"}
+      # Прожекторы мигают сами: ровный свет в дыму бесполезен, а
+      # мигание сбивает ориентацию. Нажатие оператора имеет приоритет
+      # и автоматику по узлу снимает до конца цикла комнаты.
+      - {unit: flood,  prepare: true,  alarm: "off", cycle: 10s}
+      - {unit: strobe, prepare: true,  alarm: "off"}
+      - {unit: light,  prepare: false, alarm: "on"}
+      - {unit: fan,    prepare: false, alarm: "on"}
+      - {unit: sound,  prepare: false, alarm: "off"}
+      - {unit: aux,    prepare: false, alarm: "off"}
+
+    # Целевой температуры нет: она показывается для контроля, а
+    # готовность подтверждает администратор (сценарий дымокамеры §2).
+    # Предел времени оставлен, чтобы подготовка не шла бесконечно.
+    prepare:
+      minutes: 30
+
+    devices:
+      - {id: obj-17-maze-1, name: "Лабиринт в три уровня", kind: maze}
+      - {id: obj-17-code-1, name: "Панель набора кода",    kind: stand}
+      - {id: obj-17-fire-1, name: "Имитатор очага",        kind: fire}
+
+    # Маршрут комнаты: задания проходит команда целиком.
+    # device — отметка по сигналу устройства, без него отмечает
+    # администратор, наблюдая за выполнением.
+    tasks:
+      - {id: maze,  name: "Лабиринт в три уровня", note: "Найти выход и нажать кнопку у двери"}
+      - {id: code,  name: "Набор чисел", device: obj-17-code-1, note: "Ввести код на панели"}
+      - {id: fire1, name: "Имитатор очага", device: obj-17-fire-1, note: "Найти очаг и отключить"}
+
+    cameras:
+      # Дымокамера, 1 этаж.
+      - id: room2-cam-1
+        name: "Лабиринт"
+        url: "rtsp://admin:${CAM_PASS}@192.168.1.66:554/Streaming/Channels/101"
+        transport: tcp
+        location: "над входом"
+
+      - id: room2-cam-2
+        name: "Зона заданий"
+        url: "rtsp://admin:${CAM_PASS}@192.168.1.67:554/Streaming/Channels/101"
+        transport: tcp
+        location: "дальний угол"
+
+  # --- Дымокамера, комната 2. Сценарий: docs/scenario-smoke.md --------
+  # Задания: имитатор очага, скользкий пол, завалы, закрытая дверь.
+  # Скользкий пол отмечается администратором вручную и устройства
+  # не имеет, поэтому в списке его нет.
+  - id: room-3
+    name: "Дымокамера, 2 этаж"
+    floor: 2
+    collector: obj-17-rpi-3
+
+    # Свой датчик воздуха: комнаты греются и задымляются по-разному,
+    # и одно показание на обе ничего не сказало бы о второй.
+    sensor: obj-17-smoke-temp-3
+
+    # Здесь восьмой канал занят механизмом «Завалы».
+    # Прожектора здесь нет, зато шестым идёт механизм «Завалы».
+    equipment:
+      - {unit: smoke,  prepare: true,  alarm: "off"}
+      - {unit: heat,   prepare: true,  alarm: "off"}
+      - {unit: strobe, prepare: true,  alarm: "off"}
+      - {unit: light,  prepare: false, alarm: "on"}
+      - {unit: fan,    prepare: false, alarm: "on"}
+      # Завалы: магниты держат трубы током и, оставшись включёнными,
+      # сгорают. Через три секунды центр снимает с них питание сам —
+      # трубы к этому моменту уже упали.
+      - {unit: rubble, prepare: false, alarm: "keep", hold: 3s}
+      - {unit: sound,  prepare: false, alarm: "off"}
+      - {unit: aux,    prepare: false, alarm: "off"}
+
+    prepare:
+      minutes: 30
+
+    devices:
+      - {id: obj-17-fire-2,   name: "Имитатор очага",      kind: fire}
+      - {id: obj-17-rubble-1, name: "Завалы",              kind: rubble}
+      - {id: obj-17-door-1,   name: "Тренировочная дверь", kind: door}
+
+    tasks:
+      - {id: fire2,   name: "Имитатор очага", device: obj-17-fire-2, note: "Найти очаг и отключить"}
+      - {id: floor,   name: "Скользкий пол", note: "Поднять манекен и пройти по коридору"}
+      - {id: rubble,  name: "Завалы", note: "Поднять трубы и преодолеть препятствие"}
+      - {id: door,    name: "Закрытая дверь и спасение", note: "Разрушить ригель, эвакуировать манекен"}
+
+    cameras:
+      # Дымокамера, 2 этаж — три камеры.
+      - id: room3-cam-1
+        name: "Завалы"
+        url: "rtsp://admin:${CAM_PASS}@192.168.1.68:554/Streaming/Channels/101"
+        transport: tcp
+        location: "над механизмом"
+
+      - id: room3-cam-2
+        name: "Эвакуационный выход"
+        url: "rtsp://admin:${CAM_PASS}@192.168.1.69:554/Streaming/Channels/101"
+        transport: tcp
+        location: "у двери"
+
+      - id: room3-cam-3
+        name: "Коридор"
+        url: "rtsp://admin:${CAM_PASS}@192.168.1.70:554/Streaming/Channels/101"
+        transport: tcp
+        location: "коридор, скользкий пол"

@@ -1,0 +1,34 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Пульт управления тренажёрным комплексом
+Documentation=file://{{ config_dir }}/pult.yml
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User={{ service_user }}
+Group={{ service_user }}
+
+# Доступ к шине даётся группой, а не правами root: пульту нужен
+# только символьный узел I2C.
+SupplementaryGroups=i2c
+
+# Секреты держатся отдельным файлом с правами 0640: конфигурацию
+# читают при разборе, а пароль с токеном — нет.
+EnvironmentFile={{ config_dir }}/pult.env
+
+ExecStart={{ install_dir }}/bin/pultd -config {{ config_dir }}/pult.yml
+
+# Пульт без службы — мёртвые кнопки, поэтому поднимаем всегда.
+Restart=always
+RestartSec=2s
+
+# Пульт ничего не пишет на диск: состояние живёт в центре.
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,162 @@
+# Раскладка центра комплекса LSS.
+#
+# В Docker живёт только центр: панель, API, видеотракт и база. Сборщики
+# (RPi) стоят физически в комнатах — у каждого свои реле на выводах,
+# и контейнеризовать их незачем; их разворачивает systemd, см.
+# deploy/systemd/mchs-collector.service.
+#
+#   docker compose up -d --build            центр с видео и базой
+#   docker compose --profile lite up -d     объект без камер
+#   docker compose --profile sim up         имитатор комнаты
+
+services:
+  # Центр: панель, API, комнаты, трансляции камер.
+  #
+  # Один процесс на всё, потому что панель, API и видео должны отдаваться
+  # с одного адреса: так работают cookie сессии и запросы плеера, и TLS
+  # настраивается в одном месте.
+  center:
+    build:
+      context: .
+      target: video
+      # Общий модуль и исходники панели лежат вне каталога сборки —
+      # см. Dockerfile.
+      additional_contexts:
+        shared: ../telemetry
+        panel-src: ../panel
+    ports:
+      - "${MCHS_HTTP_PORT:-8080}:8080"
+    environment:
+      # UDP на центре выключен: телеметрия приходит батчами от сборщиков
+      # (ARCHITECTURE.md §2.2). Прямой приём остаётся в профиле lite.
+      MCHS_LISTEN: ""
+      MCHS_SILENCE: 3s
+      MCHS_QUIET: "true"
+      MCHS_USERS: /etc/mchs/users.json
+      MCHS_MONGO_URI: mongodb://mongo:27017
+      MCHS_MONGO_DB: mchs
+      MCHS_ROOMS: /etc/mchs/rooms.yaml
+      MCHS_CAMERAS: ""
+      # Сегменты трансляций — в tmpfs, смонтированный ниже.
+      MCHS_VIDEO_ROOT: /video
+      # Пароль камер в rooms.yaml не пишется: файл правится на объекте
+      # и лежит в открытом репозитории. Значение берётся из .env рядом
+      # с compose.yaml (CAM_PASS=...), файл в образ не едет.
+      CAM_PASS: ${CAM_PASS:?не задан CAM_PASS — пароль IP-камер; положите его в .env рядом с compose.yaml}
+      MCHS_VIDEO_SEGMENT: 2s
+      MCHS_VIDEO_WINDOW: "6"
+      # Видеозаписи занятий. Том, а не tmpfs: ролики приобщаются
+      # к карточкам и должны пережить перезапуск.
+      MCHS_RECORDS: /records
+      # Звук объекта: фоновые эффекты залов и аварийное оповещение.
+      # Записи у центра — сборщики о них не знают.
+      MCHS_SOUNDS: /etc/mchs/sounds
+      # Чем проигрывать. Пусто — ffmpeg прямо в ALSA: на объекте
+      # звуковая карта свободна. Там, где её держит звуковой сервер
+      # (PipeWire, PulseAudio), путь идёт через его сокет —
+      # см. sounds/README.md.
+      MCHS_SOUND_PLAYER: "${MCHS_SOUND_PLAYER:-}"
+      PULSE_SERVER: "${PULSE_SERVER:-}"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    volumes:
+      - center-data:/data
+      - records:/records
+      # Раскладка комнат и учётные записи правятся на объекте и внутрь
+      # образа не едут.
+      - ./rooms.yaml:/etc/mchs/rooms.yaml:ro
+      - ./users.json:/etc/mchs/users.json:ro
+      - ./sounds:/etc/mchs/sounds:ro
+      # Сокет звукового сервера, если он на этой машине есть.
+      - ${MCHS_PULSE_SOCKET:-/dev/null}:/run/pulse-native
+    # Акустика зала: звук воспроизводит сам центр, поэтому звуковое
+    # устройство хоста пробрасывается внутрь. Группа нужна, чтобы к
+    # нему был доступ без прав root.
+    devices:
+      - /dev/snd:/dev/snd
+    group_add:
+      # Номер группы, а не имя: внутри образа своя таблица групп, и
+      # «audio» там — чужой номер. Устройство принадлежит группе
+      # audio хоста, её номер и нужен.
+      #   getent group audio | cut -d: -f3
+      - "${MCHS_AUDIO_GID:-63}"
+
+    # Сегменты трансляций живут секунды и переписываются при каждом
+    # запуске: в памяти быстрее и бережнее к диску. 256 МБ хватает
+    # примерно на десяток камер с окном в шесть сегментов.
+    tmpfs:
+      - /video:size=256m,mode=0750,uid=65534,gid=65534
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  # База: история телеметрии, карточки, журнал занятий, сессии операторов.
+  # Наружу не публикуется — центр находит её по имени сервиса.
+  mongo:
+    image: mongo:7
+    command: ["--quiet", "--bind_ip_all"]
+    volumes:
+      - mongo-data:/data/db
+    expose:
+      - "27017"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ping:1}).ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  # Объект без камер: пустой образ без ffmpeg и панели, прямой приём
+  # телеметрии по UDP. Нужен для отладки и для площадок, где видео нет.
+  center-lite:
+    profiles: ["lite"]
+    build:
+      context: .
+      additional_contexts:
+        shared: ../telemetry
+    ports:
+      - "${MCHS_LITE_UDP_PORT:-5005}:5005/udp"
+      - "${MCHS_LITE_HTTP_PORT:-8090}:8080"
+    environment:
+      MCHS_SILENCE: 3s
+      MCHS_BUFFER: "256"
+      MCHS_QUIET: "true"
+    volumes:
+      - lite-data:/data
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  # Имитатор комнаты: шлёт телеметрию тренажёров, пока их плат нет.
+  # Поднимается руками и намеренно без restart: после перезагрузки узла
+  # он ожил бы сам и подмешал выдуманные показания к настоящим.
+  simulator:
+    profiles: ["sim"]
+    image: python:3.13-alpine
+    environment:
+      MCHS_LOGIN: operator
+      MCHS_PASSWORD: ${MCHS_PASSWORD:-}
+    volumes:
+      - ./scripts/simulate_room.py:/simulate_room.py:ro
+    command:
+      - sh
+      - -c
+      - python3 /simulate_room.py http://center:8080
+        "$$MCHS_LOGIN" "$$MCHS_PASSWORD" 0 obj-17
+    # Центр пересобирают на ходу: имитатор должен подняться следом,
+    # иначе стенд молча остаётся без показаний.
+    restart: unless-stopped
+
+volumes:
+  center-data:
+  records:
+  lite-data:
+  mongo-data:

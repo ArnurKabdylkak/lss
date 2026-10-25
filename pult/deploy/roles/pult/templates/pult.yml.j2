@@ -1,0 +1,44 @@
+# {{ ansible_managed }}
+# Правки руками затрутся при следующей выкладке: источник — group_vars
+# пульта в репозитории.
+
+center:
+  url: "{{ center_url }}"
+  login: "{{ center_login }}"
+  # Пароль подставляется из окружения службы (EnvironmentFile), а не
+  # пишется сюда: файл читается не только службой.
+  password: "${PULT_PASS}"
+  timeout: {{ center_timeout }}
+
+i2c:
+  device: {{ i2c_device }}
+
+timing:
+  scan: {{ scan }}
+  debounce: {{ debounce }}
+  poll: {{ poll }}
+  blink: {{ blink }}
+
+emergency:
+  addr: "{{ emergency.addr }}"
+  button: {{ emergency.button }}
+  lamp: {{ emergency.lamp }}
+  normally_closed: {{ emergency.normally_closed | lower }}
+  reason: "{{ emergency.reason }}"
+
+rooms:
+{% for r in rooms %}
+  - id: {{ r.id }}
+    name: "{{ r.name }}"
+    addr: "{{ r.addr }}"
+    units:
+{% for u in r.units %}
+      - {unit: {{ u.unit }}, name: "{{ u.name }}", button: {{ u.button }}, lamp: {{ u.lamp }}}
+{% endfor %}
+{% endfor %}
+
+direct_token: "${PULT_ALARM_TOKEN}"
+collectors:
+{% for c in collectors %}
+  - {room: {{ c.room }}, url: "{{ c.url }}"}
+{% endfor %}

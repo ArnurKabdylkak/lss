@@ -1,0 +1,62 @@
+# Сборщик дымокамеры, комната 2: rpi_room3, 192.168.1.12.
+#
+# Третий сборщик комплекса. Программа и настройка те же, разница — в
+# адресах плат, составе узлов и механизме «Завалы», которого нет в
+# других помещениях.
+---
+collector_id: "obj-17-rpi-3"
+
+# Платы этого помещения стоят на .73 и выше, а не на .70, как было бы
+# по общему правилу «десяток на комнату» (.50 теплокамера, .60 первый
+# этаж дымокамеры, .70 второй). Камеры объекта заняли .64–.70 и
+# наехали на этот десяток: адрес .70 — это камера «Коридор» этой же
+# комнаты. Двигать семь смонтированных камер дороже, чем три платы.
+devices:
+  - addr: "192.168.1.73"
+    id: "obj-17-fire-2"
+    limits:
+      period_ms: 200
+
+  # - addr: "192.168.1.74"
+  #   id: "obj-17-rubble-1"
+  # - addr: "192.168.1.75"
+  #   id: "obj-17-door-1"
+
+# Выходы сборщика: реле 1-8 платы расширения. Имя узла в имени
+# выхода — чтобы монтаж сверялся с панелью без таблицы
+# соответствий.
+outputs:
+  - {id: obj-17-rpi-3-smoke, line: 17, kind: switch}
+  - {id: obj-17-rpi-3-heat, line: 27, kind: switch}
+  - {id: obj-17-rpi-3-strobe, line: 22, kind: switch}
+  - {id: obj-17-rpi-3-light, line: 5, kind: switch}
+  - {id: obj-17-rpi-3-fan, line: 6, kind: switch}
+  - {id: obj-17-rpi-3-rubble, line: 13, kind: switch, open_drain: false}
+  - {id: obj-17-rpi-3-aux, line: 19, kind: switch}
+  - {id: obj-17-rpi-3-aux2, line: 26, kind: switch}
+
+
+# Узлы помещения: имя узла и выводы, которыми он включается.
+# Что включается при старте и по аварии — задаёт rooms.yaml центра.
+room_units:
+  - {unit: smoke, outputs: [obj-17-rpi-3-smoke]}
+  - {unit: heat, outputs: [obj-17-rpi-3-heat]}
+  - {unit: strobe, outputs: [obj-17-rpi-3-strobe]}
+  - {unit: light, outputs: [obj-17-rpi-3-light]}
+  - {unit: fan, outputs: [obj-17-rpi-3-fan]}
+  - {unit: rubble, outputs: [obj-17-rpi-3-rubble]}
+  - {unit: aux, outputs: [obj-17-rpi-3-aux]}
+  - {unit: aux2, outputs: [obj-17-rpi-3-aux2]}
+
+# Замки дверей на реле сборщика не заведены: по монтажу их тут нет.
+room_locks: []
+
+# «Завалы» есть только здесь. Магниты питаются отдельной цепью от
+# дверных замков: аварийное открытие дверей не должно ронять трубы, и
+# по аварии этот вывод не трогается.
+room_rubble: [obj-17-rpi-3-rubble]
+
+sensors_enabled: true
+sensors_id: "obj-17-smoke-temp-3"
+sensors_device: "/dev/i2c-1"
+sensors_addr: 0x77

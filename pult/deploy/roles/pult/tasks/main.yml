@@ -1,0 +1,217 @@
+---
+- name: Проверить, что секреты переданы
+  ansible.builtin.assert:
+    that:
+      - center_password | default('', true) | length > 0
+      - alarm_token | default('', true) | length > 0
+    fail_msg: >-
+      Нужны переменные окружения PULT_PASS (пароль учётной записи pult
+      в центре) и MCHS_ALARM_TOKEN (секрет прямой аварии, тот же, что
+      у сборщиков). В репозиторий они не пишутся.
+    quiet: true
+
+- name: Проверить раскладку пульта
+  ansible.builtin.assert:
+    that:
+      - rooms | length > 0
+      - rooms | map(attribute='units') | map('length') | select('equalto', 0) | list | length == 0
+    fail_msg: Раскладка пульта пуста или в помещении нет ни одной кнопки.
+    quiet: true
+
+- name: Собрать службу под архитектуру пульта
+  ansible.builtin.command:
+    cmd: go build -trimpath -ldflags="-s -w" -o {{ build_dir }}/pultd-{{ go_arch }} ./cmd/pultd
+    chdir: "{{ playbook_dir }}/.."
+  environment:
+    CGO_ENABLED: "0"
+    GOOS: linux
+    GOARCH: "{{ go_arch }}"
+    GOARM: "{{ '7' if go_arch == 'arm' else '' }}"
+  delegate_to: localhost
+  run_once: true
+  # Сборка идёт на управляющей машине, root ей не нужен: иначе become
+  # с уровня плея спрашивает локальный пароль.
+  become: false
+  changed_when: true
+  vars:
+    go_arch: "{{ 'arm64' if ansible_facts.architecture == 'aarch64' else 'arm' }}"
+
+# Пока своё имя не разрешается, каждый sudo ждёт таймаут DNS.
+- name: Прописать собственное имя хоста
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    line: "127.0.1.1 {{ ansible_facts.hostname }}"
+    state: present
+
+- name: Включить синхронизацию времени
+  ansible.builtin.systemd_service:
+    name: systemd-timesyncd
+    enabled: true
+    state: started
+
+- name: Создать каталог настроек службы времени
+  ansible.builtin.file:
+    path: /etc/systemd/timesyncd.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: ntp_servers | length > 0
+
+- name: Указать сервер времени контура
+  ansible.builtin.copy:
+    dest: /etc/systemd/timesyncd.conf.d/mchs.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Создано ролью pult, правки затираются выкладкой.
+      [Time]
+      NTP={{ ntp_servers | join(' ') }}
+  when: ntp_servers | length > 0
+  notify: Перезапустить синхронизацию времени
+
+# Шина включается двумя вещами: dtparam поднимает контроллер, а узел
+# /dev/i2c-1 создаёт модуль i2c-dev. Без модуля расширители не видны,
+# хотя в дереве устройств шина значится рабочей.
+- name: Включить шину I2C в прошивке
+  ansible.builtin.lineinfile:
+    path: "{{ item }}"
+    line: dtparam=i2c_arm=on
+    regexp: ^#?dtparam=i2c_arm=
+    state: present
+  loop:
+    - /boot/firmware/config.txt
+  failed_when: false
+  register: boot_i2c
+
+- name: Загружать модуль i2c-dev при старте
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/mchs-i2c.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Создано ролью pult: узлы /dev/i2c-* для расширителей пульта.
+      i2c-dev
+  notify: Перезапустить пульт
+
+- name: Загрузить модуль i2c-dev сейчас
+  community.general.modprobe:
+    name: i2c-dev
+    state: present
+  failed_when: false
+
+- name: Создать группу сервиса
+  ansible.builtin.group:
+    name: "{{ service_user }}"
+    system: true
+
+- name: Создать пользователя сервиса
+  ansible.builtin.user:
+    name: "{{ service_user }}"
+    group: "{{ service_user }}"
+    # Права root пульту не нужны: достаточно доступа к шине.
+    groups: ["i2c"]
+    append: true
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+
+- name: Создать каталоги
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner | default('root') }}"
+    group: "{{ item.group | default('root') }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - path: "{{ install_dir }}/bin"
+      mode: "0755"
+    - path: "{{ config_dir }}"
+      mode: "0750"
+      group: "{{ service_user }}"
+
+- name: Положить бинарь
+  ansible.builtin.copy:
+    src: "{{ build_dir }}/pultd-{{ 'arm64' if ansible_facts.architecture == 'aarch64' else 'arm' }}"
+    dest: "{{ install_dir }}/bin/pultd"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Перезапустить пульт
+
+- name: Положить раскладку пульта
+  ansible.builtin.template:
+    src: pult.yml.j2
+    dest: "{{ config_dir }}/pult.yml"
+    owner: root
+    group: "{{ service_user }}"
+    mode: "0640"
+  notify: Перезапустить пульт
+
+# Секреты лежат отдельно от раскладки: раскладку открывают при каждой
+# правке схемы, а пароль с токеном — нет.
+- name: Положить секреты службы
+  ansible.builtin.template:
+    src: pult.env.j2
+    dest: "{{ config_dir }}/pult.env"
+    owner: root
+    group: "{{ service_user }}"
+    mode: "0640"
+  no_log: true
+  notify: Перезапустить пульт
+
+- name: Положить юнит systemd
+  ansible.builtin.template:
+    src: pultd.service.j2
+    dest: "/etc/systemd/system/{{ service_name }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Перечитать юниты systemd
+    - Перезапустить пульт
+
+- name: Включить и запустить пульт
+  ansible.builtin.systemd_service:
+    name: "{{ service_name }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: not ansible_check_mode
+
+- name: Применить отложенные перезапуски
+  ansible.builtin.meta: flush_handlers
+
+# Служба молча не поднимется, если расширители не отвечают: лучше
+# узнать об этом на выкладке, чем в зале.
+- name: Проверить, что служба держится
+  ansible.builtin.command:
+    cmd: systemctl is-active {{ service_name }}
+  register: active
+  changed_when: false
+  failed_when: active.stdout.strip() != 'active'
+  retries: 5
+  delay: 2
+  until: active.stdout.strip() == 'active'
+  when: not ansible_check_mode
+
+- name: Показать последние строки журнала пульта
+  ansible.builtin.command:
+    cmd: journalctl -u {{ service_name }} -n 15 --no-pager -o cat
+  register: log
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Журнал пульта
+  ansible.builtin.debug:
+    msg: "{{ log.stdout_lines }}"
+  when: not ansible_check_mode
+
+- name: Напомнить про перезагрузку
+  ansible.builtin.debug:
+    msg: >-
+      Шина I2C включена в config.txt — чтобы настройка прошивки
+      вступила в силу, пульт нужно перезагрузить.
+  when: boot_i2c is changed

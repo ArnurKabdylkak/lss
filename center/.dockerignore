@@ -1,0 +1,11 @@
+.git
+.gitignore
+Dockerfile
+.dockerignore
+compose.yaml
+README.md
+*.csv
+backups/
+.env
+dist/
+internal/adapter/outbound/deps/bundle/*.gz

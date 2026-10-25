@@ -1,0 +1,206 @@
+---
+- name: Проверить, что объект описан полностью
+  ansible.builtin.assert:
+    that:
+      - site | default('', true) | length > 0
+      - devices | default([], true) | length > 0
+      - heater_restore_c < heater_limit_c
+    fail_msg: >-
+      Для объекта нужны site и непустая карта devices, а температура
+      возврата пушки должна быть ниже порога отключения.
+    quiet: true
+
+- name: Собрать сборщик под архитектуру объекта
+  ansible.builtin.command:
+    cmd: go build -trimpath -ldflags="-s -w" -o {{ build_dir }}/collector-{{ go_arch }} ./cmd
+    chdir: "{{ playbook_dir }}/.."
+  environment:
+    CGO_ENABLED: "0"
+    GOOS: linux
+    GOARCH: "{{ go_arch }}"
+    GOARM: "{{ '7' if go_arch == 'arm' else '' }}"
+  delegate_to: localhost
+  run_once: true
+  # Сборка идёт на управляющей машине и root ей не нужен. Без этого
+  # become с уровня плея пытается поднять права локально — и спрашивает
+  # пароль не от того хоста.
+  become: false
+  changed_when: true
+  vars:
+    go_arch: "{{ 'arm64' if ansible_facts.architecture == 'aarch64' else 'arm' }}"
+
+# Пока своё имя не разрешается, каждый sudo на объекте ждёт таймаут
+# DNS: команды тормозят, а деплой падает на поднятии прав. Одна строка
+# в /etc/hosts это снимает.
+- name: Прописать собственное имя хоста
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    line: "127.0.1.1 {{ ansible_facts.hostname }}"
+    state: present
+
+# Метку приёма ставит сам сборщик, а у Raspberry Pi нет часов с
+# батарейкой: после обесточивания время уезжает, и показания не лягут на
+# шкалу истории в центре. Синхронизация обязательна.
+- name: Включить синхронизацию времени
+  ansible.builtin.systemd_service:
+    name: systemd-timesyncd
+    enabled: true
+    state: started
+
+# В закрытом контуре интернета нет, поэтому сервер времени должен стоять
+# внутри. Пока ntp_servers пусто, остаются системные адреса — они в
+# изолированной сети недостижимы, и время будет держаться только до
+# первого отключения питания.
+- name: Создать каталог настроек службы времени
+  ansible.builtin.file:
+    path: /etc/systemd/timesyncd.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: ntp_servers | length > 0
+
+# Шина включается двумя вещами: dtparam в прошивке поднимает
+# контроллер, а узел /dev/i2c-1 создаёт модуль i2c-dev. Без него
+# BMP280 не читается, хотя в дереве устройств шина значится рабочей —
+# ровно этот случай и выглядит как «датчик не подключён».
+- name: Загружать модуль i2c-dev при старте
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/mchs-i2c.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Создано ролью collector: узел /dev/i2c-1 для датчика сборщика.
+      i2c-dev
+  when: sensors_enabled | bool
+  notify: Перезапустить сборщик
+
+- name: Загрузить модуль i2c-dev сейчас
+  community.general.modprobe:
+    name: i2c-dev
+    state: present
+  when: sensors_enabled | bool
+  failed_when: false
+
+- name: Указать сервер времени контура
+  ansible.builtin.copy:
+    dest: /etc/systemd/timesyncd.conf.d/mchs.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Создано ролью collector, правки затираются выкладкой.
+      [Time]
+      NTP={{ ntp_servers | join(' ') }}
+  when: ntp_servers | length > 0
+  notify: Перезапустить синхронизацию времени
+
+- name: Создать группу сервиса
+  ansible.builtin.group:
+    name: "{{ service_user }}"
+    system: true
+
+- name: Создать пользователя сервиса
+  ansible.builtin.user:
+    name: "{{ service_user }}"
+    group: "{{ service_user }}"
+    # Доступ к железу даётся группами: gpio — реле пушки, i2c — свой
+    # датчик. Права root сборщику не нужны.
+    groups: "{{ ['gpio'] + (['i2c'] if sensors_enabled else []) }}"
+    append: true
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+
+- name: Создать каталоги
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner | default('root') }}"
+    group: "{{ item.group | default('root') }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - path: "{{ install_dir }}/bin"
+      mode: "0755"
+    - path: "{{ config_dir }}"
+      mode: "0750"
+      group: "{{ service_user }}"
+    # Буфер телеметрии: пишет сервис, читать посторонним незачем.
+    - path: "{{ state_dir }}"
+      mode: "0750"
+      owner: "{{ service_user }}"
+      group: "{{ service_user }}"
+
+- name: Положить бинарь
+  ansible.builtin.copy:
+    src: "{{ build_dir }}/collector-{{ 'arm64' if ansible_facts.architecture == 'aarch64' else 'arm' }}"
+    dest: "{{ install_dir }}/bin/collector"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Перезапустить сборщик
+
+- name: Положить конфигурацию
+  ansible.builtin.template:
+    src: config.yml.j2
+    dest: "{{ config_dir }}/config.yml"
+    owner: root
+    # Читает сервис: в конфиге лежит токен центра.
+    group: "{{ service_user }}"
+    mode: "0640"
+  notify: Перезапустить сборщик
+
+- name: Положить юнит systemd
+  ansible.builtin.template:
+    src: collector.service.j2
+    dest: "/etc/systemd/system/{{ service_name }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Перечитать юниты systemd
+    - Перезапустить сборщик
+
+- name: Настроить выводы и шины в прошивке
+  ansible.builtin.import_tasks: boot.yml
+
+# Запуск и проверки пропускаются в режиме --check: юнит там не
+# записан по-настоящему, и systemd о сервисе ещё не знает. Иначе
+# холостой прогон всегда падал бы на последнем шаге.
+- name: Включить и запустить сборщик
+  ansible.builtin.systemd_service:
+    name: "{{ service_name }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: not ansible_check_mode
+
+# Перезапуск до проверки: иначе здоровым окажется ещё работающий
+# прежний процесс, а новый бинарь останется непроверенным.
+- name: Применить отложенные перезапуски
+  ansible.builtin.meta: flush_handlers
+
+- name: Дождаться готовности локальной панели
+  ansible.builtin.uri:
+    url: "http://127.0.0.1{{ http_listen }}/healthz"
+    status_code: 200
+  register: health
+  retries: 10
+  delay: 2
+  until: health is succeeded
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Показать состояние пушки после переноса
+  ansible.builtin.uri:
+    url: "http://127.0.0.1{{ http_listen }}/api/v1/status"
+    return_content: true
+  register: status
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Состояние сборщика
+  ansible.builtin.debug:
+    msg: "{{ status.json | default(status.content) }}"
+  when: not ansible_check_mode

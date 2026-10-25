@@ -1,0 +1,72 @@
+# Сборщик теплокамеры: rpi_room1, 192.168.1.10.
+---
+# Комплекс один на три комнаты: центр раскладывает устройства по
+# комнатам по device_id, а не по site.
+# Имя сборщика в центре: по нему адресуются команды помещения и по
+# нему же центр отбирает, какие команды кому отдать. Должно совпадать
+# с полем collector комнаты в rooms.yaml центра.
+collector_id: "obj-17-rpi-1"
+
+# Карта плат: плата своего идентификатора не передаёт, опознать её
+# больше нечем.
+devices:
+  - addr: "192.168.1.50"
+    id: "obj-17-load-1"
+    limits:
+      period_ms: 200
+
+  # Лестница и силовая установка. Телеметрию их вида сборщик уже
+  # пропускает — он транслятор, и про виды тренажёров ему знать незачем.
+  # Нужны только адреса: пакеты с адресов вне этой карты отбрасываются
+  # (accept_unknown: false), потому что плата своего имени не передаёт.
+  #
+  # Идентификаторы согласовать с rooms.yaml центра, иначе устройство не
+  # попадёт в комнату.
+  # - addr: "192.168.1.51"
+  #   id: "obj-17-bike-1"
+  #   limits:
+  #     period_ms: 200
+  #
+  # - addr: "192.168.1.52"
+  #   id: "obj-17-stairs-1"
+  #   limits:
+  #     period_ms: 200
+
+# Выходы сборщика: реле 1-8 платы расширения. Заняты первые четыре,
+# остальные свободны — впишутся, когда появится оборудование.
+outputs:
+  - id: obj-17-heater-1
+    line: 17
+    kind: heater
+    limit_c: 60.0
+    restore_c: 50.0
+  - {id: obj-17-rpi-1-light, line: 27, kind: switch}
+  - {id: obj-17-rpi-1-fan, line: 22, kind: switch}
+  - {id: obj-17-rpi-1-aux, line: 5, kind: switch}
+  - {id: obj-17-rpi-1-aux2, line: 6, kind: switch}
+  - {id: obj-17-rpi-1-aux3, line: 13, kind: switch}
+  - {id: obj-17-rpi-1-aux4, line: 19, kind: switch}
+  - {id: obj-17-rpi-1-stairs, line: 26, kind: switch}
+
+
+# Узлы помещения: имя узла и выводы, которыми он включается.
+# Что включается при старте и по аварии — задаёт rooms.yaml центра.
+room_units:
+  - {unit: heat, outputs: [obj-17-heater-1]}
+  - {unit: light, outputs: [obj-17-rpi-1-light]}
+  - {unit: fan, outputs: [obj-17-rpi-1-fan]}
+  - {unit: aux,  outputs: [obj-17-rpi-1-aux]}
+  - {unit: aux2, outputs: [obj-17-rpi-1-aux2]}
+  - {unit: aux3, outputs: [obj-17-rpi-1-aux3]}
+  - {unit: aux4, outputs: [obj-17-rpi-1-aux4]}
+  - {unit: stairs, outputs: [obj-17-rpi-1-stairs]}
+
+room_locks: []
+room_rubble: []
+
+# Свой датчик сборщика: источник температуры, не зависящий от платы
+# пушки. В центре виден отдельным устройством.
+sensors_id: "obj-17-rpi-1-temp"
+sensors_enabled: true
+sensors_device: "/dev/i2c-1"
+sensors_addr: 0x77

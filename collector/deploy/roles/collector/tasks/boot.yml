@@ -1,0 +1,68 @@
+---
+# Правки в прошивке: шина I2C для своего датчика и начальное состояние
+# вывода реле.
+#
+# Выводы задаются здесь, а не только в сервисе: до запуска сборщика
+# линия находится в режиме входа, и реле щёлкает при каждой загрузке.
+# Уровень тут физический — прошивка про active_low не знает.
+
+- name: Найти config.txt прошивки
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /boot/firmware/config.txt
+    - /boot/config.txt
+  register: boot_candidates
+
+- name: Запомнить путь к config.txt
+  ansible.builtin.set_fact:
+    boot_config: "{{ (boot_candidates.results | selectattr('stat.exists') | map(attribute='stat.path') | first) | default('') }}"
+
+- name: Убедиться, что config.txt найден
+  ansible.builtin.assert:
+    that: boot_config | length > 0
+    fail_msg: >-
+      Не найден config.txt прошивки. Это не Raspberry Pi или образ
+      нестандартный — настроить вывод реле автоматически нельзя.
+    quiet: true
+
+# Своя резервная копия вместо backup: true у blockinfile. Раздел
+# прошивки — FAT32, а штатное имя копии содержит двоеточия и @, которые
+# FAT не принимает: задача падала с Errno 22. Копия снимается один раз,
+# до первой правки, и дальше не перезаписывается.
+- name: Сохранить исходный config.txt прошивки
+  ansible.builtin.copy:
+    src: "{{ boot_config }}"
+    dest: "{{ boot_config }}.orig"
+    remote_src: true
+    force: false
+    mode: "0755"
+
+- name: Прописать шины и выводы
+  ansible.builtin.blockinfile:
+    path: "{{ boot_config }}"
+    marker: "# {mark} mchs collector"
+    block: |
+      {% if sensors_enabled %}
+      dtparam=i2c_arm=on
+      {% endif %}
+      {% for o in outputs %}
+      gpio={{ o.line }}=op,dh
+      {% endfor %}
+  register: boot_changed
+  notify: Отметить, что нужна перезагрузка
+
+- name: Сообщить, что правки прошивки ещё не действуют
+  ansible.builtin.debug:
+    msg: >-
+      {{ boot_config }} изменён, но выводы и шины применятся только
+      после перезагрузки. Объект с тепловой пушкой плейбук сам не
+      перезагружает — перезагрузите вручную, когда тренажёр свободен.
+      До перезагрузки реле может щёлкнуть при старте системы.
+  when: boot_changed is changed and not allow_reboot
+
+- name: Перезагрузить объект
+  ansible.builtin.reboot:
+    reboot_timeout: 300
+    msg: Применение настроек выводов GPIO
+  when: boot_changed is changed and allow_reboot

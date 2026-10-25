@@ -1,0 +1,24 @@
+# Секреты: пароли камер, учётные записи, токены. Репозиторий открытый.
+.env
+.env.*
+!.env.example
+users.json
+*.pem
+*.key
+
+# Рабочие данные
+*.jsonl
+*.jsonl.tmp
+*.log
+records/
+backups/
+data/
+
+# Сборка
+bin/
+dist/
+paneldist/
+node_modules/
+.pio/
+*.exe
+center/internal/adapter/outbound/deps/bundle/

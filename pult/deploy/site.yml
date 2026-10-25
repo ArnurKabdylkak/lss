@@ -1,0 +1,12 @@
+# Перенос службы пульта на отдельный Raspberry Pi.
+#
+#   export PULT_PASS=...          # пароль учётной записи pult в центре
+#   export MCHS_ALARM_TOKEN=...   # секрет прямой аварии, как у сборщиков
+#   ansible-playbook site.yml
+#   ansible-playbook site.yml --check --diff   # посмотреть, что изменится
+---
+- name: Пульт управления тренажёрным комплексом
+  hosts: pult
+  become: true
+  roles:
+    - pult

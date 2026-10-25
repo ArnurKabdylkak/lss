@@ -1,0 +1,15 @@
+---
+- name: Перечитать юниты systemd
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+- name: Перезапустить пульт
+  ansible.builtin.systemd_service:
+    name: "{{ service_name }}"
+    state: restarted
+  when: not ansible_check_mode
+
+- name: Перезапустить синхронизацию времени
+  ansible.builtin.systemd_service:
+    name: systemd-timesyncd
+    state: restarted

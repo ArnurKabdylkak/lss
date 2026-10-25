@@ -1,0 +1,37 @@
+# Автозапуск сборщика на Raspberry Pi.
+#
+#   sudo cp deploy/systemd/mchs-collector.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now mchs-collector
+#
+# Сборщик живёт в /data/lss/collector; путь к бинарю и конфигурации правятся ниже.
+
+[Unit]
+Description=Сборщик телеметрии объекта
+After=network-online.target
+Wants=network-online.target
+
+# Обрыв связи с центром — штатное состояние, а не повод уйти в отказ:
+# счётчик перезапусков не должен останавливать юнит насовсем.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=mchs
+WorkingDirectory=/data/lss/collector
+ExecStart=/data/lss/collector/bin/collector
+
+# Сборщик обязан пережить и падение, и обрыв сети: без него плата
+# никуда не достучится, а буфер на диске копится только у него.
+Restart=always
+RestartSec=3
+
+# Ограничение прав: сборщику нужны только свой каталог и сеть.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/data/lss/collector
+
+[Install]
+WantedBy=multi-user.target

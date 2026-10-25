@@ -1,0 +1,8 @@
+.pio/
+.vscode/
+.DS_Store
+
+# Скомпилированный приёмник телеметрии
+/tools/receiver/stm32-receiver
+/tools/receiver/*.csv
+/test/host/test_relay

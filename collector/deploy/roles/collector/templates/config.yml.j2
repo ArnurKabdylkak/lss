@@ -1,0 +1,118 @@
+# {{ ansible_managed }}
+# Правки руками затрутся при следующем деплое: источник — host_vars
+# объекта в репозитории.
+site: {{ site }}
+
+listen: "{{ listen }}"
+http: "{{ http_listen }}"
+
+# Общий секрет аварийной остановки с пульта, минуя центр. Пусто —
+# приём выключен, и остановка ходит только через центр.
+alarm_token: "{{ alarm_token }}"
+
+silence: {{ silence }}
+
+center:
+  url: "{{ center_url }}"
+  token: "{{ center_token }}"
+  every: {{ center_every }}
+  timeout: {{ center_timeout }}
+  max_batch: {{ center_max_batch }}
+
+buffer:
+  # В каталоге состояния, а не рядом с бинарём: обновление сборщика не
+  # должно задевать показания, ещё не отданные в центр.
+  path: "{{ state_dir }}/buffer.jsonl"
+  max_records: {{ buffer_max_records }}
+
+devices:
+{% for d in devices %}
+  - addr: "{{ d.addr }}"
+    id: "{{ d.id }}"
+{% if d.port is defined %}
+    port: {{ d.port }}
+{% endif %}
+{% if d.limits is defined %}
+    limits:
+{% if d.limits.wheel_mm is defined %}
+      wheel_mm: {{ d.limits.wheel_mm }}
+{% endif %}
+{% if d.limits.period_ms is defined %}
+      period_ms: {{ d.limits.period_ms }}
+{% endif %}
+{% endif %}
+{% endfor %}
+
+accept_unknown: {{ accept_unknown | lower }}
+
+sensors:
+  enabled: {{ sensors_enabled | lower }}
+  device: "{{ sensors_device | default('/dev/i2c-1') }}"
+  addr: {{ sensors_addr | default(118) }}
+  every: {{ sensors_every }}
+  id: "{{ sensors_id | default(collector_id ~ '-temp') }}"
+
+outputs:
+  enabled: {{ outputs_enabled | lower }}
+  chip: "{{ outputs_chip }}"
+
+  # Обвязка одинаковая для всех модулей объекта. active_low: реле с
+  # оптопарой замыкается низким уровнем, инверсию делает ядро.
+  # open_drain: модули питаются от 5 В, и выключенное состояние
+  # отпускает линию вместо выдачи 3,3 В в противоход.
+  active_low: {{ outputs_active_low | lower }}
+  open_drain: {{ outputs_open_drain | lower }}
+
+  lines:
+{% for o in outputs %}
+    - id: {{ o.id }}
+      line: {{ o.line }}
+      kind: {{ o.kind }}
+{% if o.active_low is defined %}
+      active_low: {{ o.active_low | lower }}
+{% endif %}
+{% if o.open_drain is defined %}
+      open_drain: {{ o.open_drain | lower }}
+{% endif %}
+{% if o.kind == 'heater' %}
+      limit_c: {{ o.limit_c | default(heater_limit_c) }}
+      restore_c: {{ o.restore_c | default(heater_restore_c) }}
+      min_off: {{ o.min_off | default(heater_min_off) }}
+      board_ttl: {{ o.board_ttl | default(heater_board_ttl) }}
+      disagree_c: {{ o.disagree_c | default(heater_disagree_c) }}
+{% if o.temp_from is defined and o.temp_from | length > 0 %}
+      temp_from:
+{% for id in o.temp_from %}
+        - {{ id }}
+{% endfor %}
+{% endif %}
+{% endif %}
+{% endfor %}
+
+# Помещение: узлы оборудования, завалы, замки и акустика.
+#
+# Логика у всех трёх сборщиков одна — различаются адреса и состав
+# обвязки. Какое реле за что отвечает, знает сборщик; что включается
+# при старте и по аварии — решает центр и присылает командой на
+# каждый узел. Сценарий в двух местах разошёлся бы в первый же день.
+room:
+  id: "{{ collector_id }}"
+
+  units:
+{% for u in room_units %}
+    - unit: {{ u.unit }}
+      outputs: [{{ u.outputs | join(', ') }}]
+{% endfor %}
+
+{% if room_rubble | default([]) | length > 0 %}
+  # Магниты «Завалов» питаются отдельной цепью от дверных замков:
+  # аварийное открытие дверей не должно ронять трубы.
+  rubble: [{{ room_rubble | join(', ') }}]
+{% endif %}
+
+{% if room_locks | default([]) | length > 0 %}
+  # Замки отпускаются по аварии всегда: из задымлённого зала должны
+  # выйти.
+  locks: [{{ room_locks | join(', ') }}]
+{% endif %}
+

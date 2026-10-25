@@ -1,0 +1,25 @@
+# Список камер объекта. Правится инженером на месте, без пересборки.
+#
+# Пароль можно не писать в файл, а подставить из окружения:
+#   url: "rtsp://admin:${CAM_PASS}@192.168.1.64:554/Streaming/channels/101"
+#
+# transport: tcp (надёжнее, по умолчанию) или udp (задержка меньше).
+# disabled: true — камера описана, но не поднимается.
+
+cameras:
+  - id: cam-101
+    name: "Въезд на объект"
+    url: "rtsp://admin:mchs2026@192.168.1.64:554/Streaming/channels/101"
+    transport: tcp
+    site: default
+    location: "КПП, восточная сторона"
+    audio: false
+
+  # Второй поток той же камеры Hikvision — меньше разрешение,
+  # годится для обзорной стены из нескольких окон.
+  - id: cam-101-sub
+    name: "Въезд (обзорный поток)"
+    url: "rtsp://admin:mchs2026@192.168.1.64:554/Streaming/channels/102"
+    transport: tcp
+    site: default
+    disabled: true

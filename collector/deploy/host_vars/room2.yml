@@ -1,0 +1,59 @@
+# Сборщик дымокамеры, комната 1: rpi_room2, 192.168.1.11.
+#
+# Логика та же, что у теплокамеры: отличаются адреса плат и состав
+# обвязки. Ни одной особой ветки в программе под это нет.
+---
+collector_id: "obj-17-rpi-2"
+
+# Платы комнаты: лабиринт, стойка набора кода, имитатор очага.
+# Идентификаторы согласованы с rooms.yaml центра — иначе показания не
+# попадут в комнату.
+devices:
+  - addr: "192.168.1.60"
+    id: "obj-17-code-1"
+    limits:
+      period_ms: 200
+
+  - addr: "192.168.1.61"
+    id: "obj-17-fire-1"
+  # - addr: "192.168.1.62"
+  #   id: "obj-17-maze-1"
+
+# Выходы сборщика: реле 1-8 платы расширения. Имя узла в имени
+# выхода — чтобы монтаж сверялся с панелью без таблицы
+# соответствий.
+outputs:
+  - {id: obj-17-rpi-2-smoke, line: 17, kind: switch}
+  - {id: obj-17-rpi-2-heat, line: 27, kind: switch}
+  - {id: obj-17-rpi-2-flood, line: 22, kind: switch}
+  - {id: obj-17-rpi-2-strobe, line: 5, kind: switch}
+  - {id: obj-17-rpi-2-light, line: 6, kind: switch}
+  - {id: obj-17-rpi-2-fan, line: 13, kind: switch}
+  - {id: obj-17-rpi-2-aux, line: 19, kind: switch}
+  - {id: obj-17-rpi-2-aux2, line: 26, kind: switch}
+
+
+# Узлы помещения: имя узла и выводы, которыми он включается.
+# Что включается при старте и по аварии — задаёт rooms.yaml центра.
+room_units:
+  - {unit: smoke, outputs: [obj-17-rpi-2-smoke]}
+  - {unit: heat, outputs: [obj-17-rpi-2-heat]}
+  - {unit: flood, outputs: [obj-17-rpi-2-flood]}
+  - {unit: strobe, outputs: [obj-17-rpi-2-strobe]}
+  - {unit: light, outputs: [obj-17-rpi-2-light]}
+  - {unit: fan, outputs: [obj-17-rpi-2-fan]}
+  - {unit: aux, outputs: [obj-17-rpi-2-aux]}
+  - {unit: aux2, outputs: [obj-17-rpi-2-aux2]}
+
+# Замки дверей на реле сборщика не заведены: по монтажу их тут нет.
+room_locks: []
+room_rubble: []
+
+# Датчик воздуха комнаты: тепловой пушки здесь нет, температуру берут
+# с него (sensor в rooms.yaml центра).
+# Датчик воздуха комнаты: имя согласовано с полем sensor комнаты в
+# rooms.yaml центра, иначе температура не попадёт на экран.
+sensors_enabled: true
+sensors_id: "obj-17-smoke-temp-2"
+sensors_device: "/dev/i2c-1"
+sensors_addr: 0x77

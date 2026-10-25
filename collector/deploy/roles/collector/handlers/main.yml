@@ -1,0 +1,23 @@
+---
+# Перезапуск гасит нагрев: при остановке сервиса линия реле
+# освобождается, и ядро снимает её в безопасное состояние. Это
+# ожидаемо, но означает, что деплой во время работы тренажёра
+# прерывает прогрев.
+- name: Перезапустить сборщик
+  ansible.builtin.systemd_service:
+    name: "{{ service_name }}"
+    state: restarted
+    daemon_reload: true
+
+- name: Перечитать юниты systemd
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+- name: Отметить, что нужна перезагрузка
+  ansible.builtin.set_fact:
+    reboot_required: true
+
+- name: Перезапустить синхронизацию времени
+  ansible.builtin.systemd_service:
+    name: systemd-timesyncd
+    state: restarted

@@ -1,0 +1,15 @@
+# Перенос сборщика телеметрии на объекты.
+#
+#   ansible-playbook site.yml                    # все объекты
+#   ansible-playbook site.yml -l obj-17          # один объект
+#   ansible-playbook site.yml --check --diff     # посмотреть, что изменится
+#
+# Объекты обрабатываются по одному: деплой останавливает сервис, а
+# вместе с ним гаснет нагрев. Валить все тренажёры разом не нужно.
+---
+- name: Сборщик телеметрии на объекте
+  hosts: collectors
+  become: true
+  serial: 1
+  roles:
+    - collector
